@@ -19,6 +19,7 @@ pub mod panic;
 pub mod reorganize_blocks;
 pub mod scc;
 pub mod utils;
+pub mod withdraw_gas_status;
 
 #[cfg(test)]
 mod test;
