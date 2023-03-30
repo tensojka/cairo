@@ -104,12 +104,13 @@ fn create_panic_block(
 
     // The block consists of creating a new array, appending 'Out of gas' to it and panic with this
     // array as panic data.
+    let array_module = core_submodule(db.upcast(), "array");
     Ok(FlatBlock {
         statements: vec![
             Statement::Call(StatementCall {
                 function: get_function_id(
                     db.upcast(),
-                    core_submodule(db.upcast(), "array"),
+                    array_module,
                     "array_new".into(),
                     vec![GenericArgumentId::Type(core_felt252_ty(db.upcast()))],
                 )
@@ -125,7 +126,7 @@ fn create_panic_block(
             Statement::Call(StatementCall {
                 function: get_function_id(
                     db.upcast(),
-                    core_submodule(db.upcast(), "array"),
+                    array_module,
                     "array_append".into(),
                     vec![GenericArgumentId::Type(core_felt252_ty(db.upcast()))],
                 )
