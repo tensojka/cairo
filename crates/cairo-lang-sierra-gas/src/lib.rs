@@ -11,6 +11,7 @@ use cairo_lang_sierra::program::{Program, Statement, StatementIdx};
 use cairo_lang_sierra::program_registry::{ProgramRegistry, ProgramRegistryError};
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use cairo_lang_utils::unordered_hash_set::UnorderedHashSet;
+use compute_costs::ComputeCostInfoProviderImpl;
 use core_libfunc_cost_base::InvocationCostInfoProvider;
 use core_libfunc_cost_expr::CostExprMap;
 use cost_expr::Var;
@@ -74,7 +75,8 @@ impl<'a, TokenUsages: Fn(CostTokenType) -> usize, ApChangeVarValue: Fn() -> usiz
     }
 }
 
-/// Calculates gas precost information for a given program - the gas costs of non-step tokens.
+/// Calculates gas pre-cost information for a given program - the gas costs of non-step tokens.
+// TODO(lior): Remove this function once [compute_precost_info] is used.
 pub fn calc_gas_precost_info(
     program: &Program,
     function_set_costs: OrderedHashMap<FunctionId, OrderedHashMap<CostTokenType, i32>>,
@@ -91,6 +93,23 @@ pub fn calc_gas_precost_info(
         function_set_costs,
         &registry,
     )
+}
+
+/// Calculates gas pre-cost information for a given program - the gas costs of non-step tokens.
+pub fn compute_precost_info(program: &Program) -> Result<GasInfo, CostError> {
+    let registry = ProgramRegistry::<CoreType, CoreLibfunc>::new(program)?;
+    let info_provider = ComputeCostInfoProviderImpl::new(&registry);
+
+    Ok(compute_costs::compute_costs(
+        program,
+        &(|libfunc_id| {
+            let core_libfunc = registry
+                .get_libfunc(libfunc_id)
+                .expect("Program registry creation would have already failed.");
+            core_libfunc_cost_base::core_libfunc_cost(core_libfunc, &info_provider)
+        }),
+        &compute_costs::PreCostContext {},
+    ))
 }
 
 /// Calculates gas postcost information for a given program - the gas costs of step token.

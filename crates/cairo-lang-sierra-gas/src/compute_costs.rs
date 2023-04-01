@@ -1,19 +1,84 @@
+// TODO:
+// 1. Other gas tokens
+// 2. AP
+// 3. Withdraw gas builtins.
+// 4. refund gas
+
+use cairo_lang_sierra::extensions::core::{CoreLibfunc, CoreType};
 use cairo_lang_sierra::extensions::gas::CostTokenType;
-use cairo_lang_sierra::ids::ConcreteLibfuncId;
+use cairo_lang_sierra::extensions::ConcreteType;
+use cairo_lang_sierra::ids::{ConcreteLibfuncId, ConcreteTypeId};
 use cairo_lang_sierra::program::{Invocation, Program, Statement, StatementIdx};
+use cairo_lang_sierra::program_registry::ProgramRegistry;
 use cairo_lang_utils::iterators::zip_eq3;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
+use itertools::zip_eq;
 
+use crate::core_libfunc_cost_base::core_libfunc_cost;
 use crate::gas_info::GasInfo;
-use crate::objects::BranchCost;
+use crate::objects::{BranchCost, ConstCost, CostInfoProvider, PreCost};
+use crate::CostError;
 
 type VariableValues = OrderedHashMap<(StatementIdx, CostTokenType), i64>;
 
-/// A trait for the cost type (either `PreCost` for pre-cost computation, or `i32` for the post-cost
+/// Implementation of [CostInfoProvider] given a [program registry](ProgramRegistry).
+pub struct ComputeCostInfoProviderImpl<'a> {
+    registry: &'a ProgramRegistry<CoreType, CoreLibfunc>,
+}
+impl<'a> ComputeCostInfoProviderImpl<'a> {
+    pub fn new(registry: &'a ProgramRegistry<CoreType, CoreLibfunc>) -> Self {
+        Self { registry }
+    }
+}
+impl<'a> CostInfoProvider for ComputeCostInfoProviderImpl<'a> {
+    fn type_size(&self, ty: &ConcreteTypeId) -> usize {
+        // TODO: fix `as usize`.
+        self.registry.get_type(ty).unwrap().info().size as usize
+    }
+}
+
+/// A trait for the cost type (either [PreCost] for pre-cost computation, or `i32` for the post-cost
 /// computation).
 pub trait CostTypeTrait: std::fmt::Debug + Default + Clone + Eq {
     fn max(values: impl Iterator<Item = Self>) -> Self;
+}
+
+impl CostTypeTrait for i32 {
+    fn max(values: impl Iterator<Item = Self>) -> Self {
+        values.max().unwrap_or_default()
+    }
+}
+
+impl CostTypeTrait for PreCost {
+    fn max(values: impl Iterator<Item = Self>) -> Self {
+        let mut res = Self::default();
+        for value in values {
+            for (token_type, val) in value.0 {
+                res.0.insert(token_type, std::cmp::max(*res.0.get(&token_type).unwrap_or(&0), val));
+            }
+        }
+        res
+    }
+}
+
+pub fn compute_postcost_info(
+    program: &Program,
+    get_ap_change_fn: &dyn Fn(&StatementIdx) -> usize,
+) -> Result<GasInfo, CostError> {
+    let registry = ProgramRegistry::<CoreType, CoreLibfunc>::new(program)?;
+    let info_provider = ComputeCostInfoProviderImpl { registry: &registry };
+    let specific_cost_context = PostcostContext { get_ap_change_fn };
+    Ok(compute_costs(
+        program,
+        &(|libfunc_id| {
+            let core_libfunc = registry
+                .get_libfunc(libfunc_id)
+                .expect("Program registry creation would have already failed.");
+            core_libfunc_cost(core_libfunc, &info_provider)
+        }),
+        &specific_cost_context,
+    ))
 }
 
 /// Computes the [GasInfo] for a given program.
@@ -175,8 +240,6 @@ impl<'a, CostType: CostTypeTrait> CostContext<'a, CostType> {
     ///
     /// For `branch_align` the function returns the result as if the alignment is zero (since the
     /// alignment is not know at this point).
-    // TODO(lior): Remove the following annotation once `wallet_at` is used.
-    #[allow(dead_code)]
     fn wallet_at(&self, idx: &StatementIdx) -> CostType {
         match self.costs.get(idx) {
             Some(CostComputationStatus::Done(res)) => res.clone(),
@@ -214,6 +277,7 @@ impl<'a, CostType: CostTypeTrait> CostContext<'a, CostType> {
                 == Some(CostComputationStatus::InProgress),
             "Unexpected cost computation status."
         );
+        println!("Cost of {idx} is {res:?}.");
         res
     }
 
@@ -246,5 +310,148 @@ impl<'a, CostType: CostTypeTrait> CostContext<'a, CostType> {
                 CostType::max(branch_requirements.into_iter())
             }
         }
+    }
+}
+
+pub struct PreCostContext {}
+
+impl SpecificCostContextTrait<PreCost> for PreCostContext {
+    fn to_cost_map(cost: PreCost) -> OrderedHashMap<CostTokenType, i64> {
+        let res = cost.0;
+        res.into_iter().map(|(token_type, val)| (token_type, val as i64)).collect()
+    }
+
+    fn get_withdraw_gas_values(
+        &self,
+        _branch_cost: &BranchCost,
+        wallet_value: &PreCost,
+        future_wallet_value: PreCost,
+    ) -> OrderedHashMap<CostTokenType, i64> {
+        let res = (future_wallet_value - wallet_value.clone()).0;
+        CostTokenType::iter_precost()
+            .map(|token_type| (*token_type, *res.get(token_type).unwrap_or(&0) as i64))
+            .collect()
+    }
+
+    fn get_branch_align_values(
+        &self,
+        wallet_value: &PreCost,
+        branch_requirement: &PreCost,
+    ) -> OrderedHashMap<CostTokenType, i64> {
+        let res = (wallet_value.clone() - branch_requirement.clone()).0;
+        CostTokenType::iter_precost()
+            .map(|token_type| (*token_type, *res.get(token_type).unwrap_or(&0) as i64))
+            .collect()
+    }
+
+    fn get_branch_requirements(
+        &self,
+        wallet_at_fn: &mut dyn FnMut(&StatementIdx) -> PreCost,
+        idx: &StatementIdx,
+        invocation: &Invocation,
+        libfunc_cost: &[BranchCost],
+    ) -> Vec<PreCost> {
+        zip_eq(&invocation.branches, libfunc_cost)
+            .map(|(branch_info, branch_cost)| {
+                let branch_cost = match &*branch_cost {
+                    BranchCost::Regular { const_cost: _, pre_cost } => pre_cost.clone(),
+                    BranchCost::BranchAlign => Default::default(),
+                    BranchCost::FunctionCall { const_cost: _, function } => {
+                        wallet_at_fn(&function.entry_point)
+                    }
+                    BranchCost::WithdrawGas { const_cost: _, success, with_builtin_costs: _ } => {
+                        if *success {
+                            // If withdraw_gas succeeds, we don't need to take
+                            // future_wallet_value into account, so we simply return.
+                            return Default::default();
+                        } else {
+                            Default::default()
+                        }
+                    }
+                    BranchCost::RedepositGas => todo!(),
+                };
+                let future_wallet_value = wallet_at_fn(&idx.next(&branch_info.target));
+                branch_cost + future_wallet_value
+            })
+            .collect()
+    }
+}
+
+struct PostcostContext<'a> {
+    get_ap_change_fn: &'a dyn Fn(&StatementIdx) -> usize,
+}
+
+impl<'a> SpecificCostContextTrait<i32> for PostcostContext<'a> {
+    fn to_cost_map(cost: i32) -> OrderedHashMap<CostTokenType, i64> {
+        if cost == 0 {
+            Default::default()
+        } else {
+            [(CostTokenType::Const, cost as i64)].into_iter().collect()
+        }
+    }
+
+    fn get_withdraw_gas_values(
+        &self,
+        branch_cost: &BranchCost,
+        wallet_value: &i32,
+        future_wallet_value: i32,
+    ) -> OrderedHashMap<CostTokenType, i64> {
+        // TODO: with_builtin_costs.
+
+        let BranchCost::WithdrawGas { const_cost, success: true, with_builtin_costs: _ } = branch_cost else {
+            panic!("Unexpected BranchCost: {:?}.", branch_cost);
+        };
+
+        let amount = ((const_cost.cost() + future_wallet_value) as i64) - (*wallet_value as i64);
+        [(CostTokenType::Const, amount as i64)].into_iter().collect()
+    }
+
+    fn get_branch_align_values(
+        &self,
+        wallet_value: &i32,
+        branch_requirement: &i32,
+    ) -> OrderedHashMap<CostTokenType, i64> {
+        let amount = (wallet_value - branch_requirement) as i64;
+        [(CostTokenType::Const, amount as i64)].into_iter().collect()
+    }
+
+    fn get_branch_requirements(
+        &self,
+        wallet_at_fn: &mut dyn FnMut(&StatementIdx) -> i32,
+        idx: &StatementIdx,
+        invocation: &Invocation,
+        libfunc_cost: &[BranchCost],
+    ) -> Vec<i32> {
+        zip_eq(&invocation.branches, libfunc_cost)
+            .map(|(branch_info, branch_cost)| {
+                let branch_cost = match &*branch_cost {
+                    BranchCost::Regular { const_cost, pre_cost: _ } => const_cost.cost(),
+                    BranchCost::BranchAlign => {
+                        let ap_change = (self.get_ap_change_fn)(idx);
+                        if ap_change == 0 {
+                            0
+                        } else {
+                            ConstCost { steps: 1, holes: ap_change as i32, range_checks: 0 }.cost()
+                        }
+                    }
+                    BranchCost::FunctionCall { const_cost, function } => {
+                        wallet_at_fn(&function.entry_point) + const_cost.cost()
+                    }
+                    BranchCost::WithdrawGas { const_cost, success, with_builtin_costs: _ } => {
+                        let cost = const_cost.cost();
+                        // TODO: with_builtins.
+                        // If withdraw_gas succeeds, we don't need to take
+                        // future_wallet_value into account, so we simply return.
+                        if *success {
+                            return cost;
+                        }
+                        cost
+                    }
+                    BranchCost::RedepositGas => todo!(),
+                };
+                let future_wallet_value = wallet_at_fn(&idx.next(&branch_info.target));
+                branch_cost + future_wallet_value
+            })
+            .collect()
     }
 }
