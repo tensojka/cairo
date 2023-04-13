@@ -2,6 +2,7 @@ use cairo_felt::Felt252;
 use cairo_lang_casm::builder::CasmBuilder;
 use cairo_lang_casm::casm_build_extend;
 use cairo_lang_sierra::extensions::consts::SignatureAndConstConcreteLibfunc;
+use cairo_lang_sierra::extensions::secp256k1::Secp256K1EcConcreteLibfunc;
 use cairo_lang_sierra::extensions::starknet::StarkNetConcreteLibfunc;
 use cairo_lang_sierra_gas::core_libfunc_cost::SYSTEM_CALL_COST;
 use itertools::Itertools;
@@ -77,6 +78,12 @@ pub fn build(
             build_syscalls(builder, "SendMessageToL1", [1, 2], [])
         }
         StarkNetConcreteLibfunc::Testing(libfunc) => testing::build(libfunc, builder),
+        StarkNetConcreteLibfunc::Secp256K1(Secp256K1EcConcreteLibfunc::Add(_)) => {
+            build_syscalls(builder, "Secp256K1EcAdd", [1, 1], [1])
+        }
+        StarkNetConcreteLibfunc::Secp256K1(Secp256K1EcConcreteLibfunc::Mul(_)) => {
+            build_syscalls(builder, "Secp256K1EcMul", [1, 1], [1])
+        }
     }
 }
 
