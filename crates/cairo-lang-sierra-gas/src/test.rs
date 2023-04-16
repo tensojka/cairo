@@ -24,8 +24,11 @@ fn get_example_program(name: &str) -> Program {
 }
 
 fn test_solve_gas(inputs: &OrderedHashMap<String, String>) -> OrderedHashMap<String, String> {
-    let path = &inputs["test_file_name"];
-    let program = get_example_program(path);
+    let program = if let Some(path) = inputs.get("test_file_name") {
+        get_example_program(path)
+    } else {
+        cairo_lang_sierra::ProgramParser::new().parse(&inputs["test_program"]).unwrap()
+    };
 
     let gas_info0 = calc_gas_precost_info(&program, Default::default()).unwrap();
     let gas_info1 =
