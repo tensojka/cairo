@@ -193,42 +193,6 @@ use crate::test_utils::{build_metadata, read_sierra_example_file, strip_comments
                 ret;
             "};
             "branch align")]
-#[test_case(indoc!{"
-                type RangeCheck = RangeCheck;
-                type u128 = u128;
-
-                libfunc revoke_ap_tracking = revoke_ap_tracking;
-                libfunc branch_align = branch_align;
-                libfunc jump = jump;
-                libfunc u128_lt = u128_lt;
-                libfunc store_u128 = store_temp<u128>;
-                libfunc store_rc = store_temp<RangeCheck>;
-
-                revoke_ap_tracking() -> ();
-                u128_lt([1], [2], [3]) {fallthrough([1]) 4([1]) };
-                branch_align() -> ();
-                jump() { 5() };
-                branch_align() -> ();
-
-                store_rc([1]) -> ([1]);
-                return ([1]);
-
-                test_program@0([1]: RangeCheck, [2]: u128, [3]: u128) -> (RangeCheck);
-            "}, true, indoc!{"
-                [fp + -4] = [ap + 1] + [fp + -3], ap++;
-                %{ memory[ap + -1] = memory[ap + 0] < 340282366920938463463374607431768211456 %}
-                jmp rel 7 if [ap + -1] != 0, ap++;
-                // a < b.
-                [ap + 0] = [ap + -1] + 340282366920938463463374607431768211456, ap++;
-                [ap + -1] = [[fp + -5] + 0];
-                jmp rel 5;
-                // a < b.
-                [ap + -1] = [[fp + -5] + 0];
-                jmp rel 2;
-                // Store range_check and return.
-                [ap + 0] = [fp + -5] + 1, ap++;
-                ret;
-            "}; "u128_lt")]
 #[test_case(indoc! {"
                 type u128 = u128;
                 type RangeCheck = RangeCheck;
@@ -477,11 +441,19 @@ fn sierra_to_casm(sierra_code: &str, check_gas_usage: bool, expected_casm: &str)
             "}, "InvalidStatementIdx";
             "Invalid entry point")]
 #[test_case(indoc! {"
+                type felt252 = felt252;
+
                 return();
 
                 foo@0([1]: felt252, [1]: felt252) -> ();
             "}, "#0: Invalid function declaration.";
             "Bad Declaration")]
+#[test_case(indoc! {"
+                return();
+
+                foo@0([0]: BadType) -> ();
+            "}, "#0: Unknown type `BadType`.";
+            "Unknown type size")]
 #[test_case(indoc! {"
             return();
             "}, "MissingAnnotationsForStatement";

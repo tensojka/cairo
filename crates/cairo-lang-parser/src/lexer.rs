@@ -171,6 +171,7 @@ impl<'a> Lexer<'a> {
         self.take_while(|c| c.is_ascii_alphanumeric() || c == '_');
 
         match self.peek_span_text() {
+            "as" => TokenKind::As,
             "const" => TokenKind::Const,
             "false" => TokenKind::False,
             "true" => TokenKind::True,
@@ -188,6 +189,7 @@ impl<'a> Lexer<'a> {
             "match" => TokenKind::Match,
             "if" => TokenKind::If,
             "loop" => TokenKind::Loop,
+            "continue" => TokenKind::Continue,
             "break" => TokenKind::Break,
             "else" => TokenKind::Else,
             "use" => TokenKind::Use,
@@ -257,6 +259,7 @@ impl<'a> Lexer<'a> {
                 'a'..='z' | 'A'..='Z' | '_' => self.take_token_identifier(),
                 ':' => self.pick_kind(':', TokenKind::ColonColon, TokenKind::Colon),
                 '!' => self.pick_kind('=', TokenKind::Neq, TokenKind::Not),
+                '~' => self.take_token_of_kind(TokenKind::BitNot),
                 '=' => {
                     self.take();
                     match self.peek() {
@@ -327,6 +330,7 @@ enum TokenKind {
     ShortString,
 
     // Keywords.
+    As,
     Const,
     False,
     True,
@@ -344,6 +348,7 @@ enum TokenKind {
     Match,
     If,
     Loop,
+    Continue,
     Break,
     Else,
     Use,
@@ -368,6 +373,7 @@ enum TokenKind {
     LE,
     LT,
     Not,
+    BitNot,
     Plus,
     PlusEq,
     Minus,
@@ -405,6 +411,7 @@ enum TokenKind {
 
 fn token_kind_to_terminal_syntax_kind(kind: TokenKind) -> SyntaxKind {
     match kind {
+        TokenKind::As => SyntaxKind::TerminalAs,
         TokenKind::Const => SyntaxKind::TerminalConst,
         TokenKind::Identifier => SyntaxKind::TerminalIdentifier,
         TokenKind::LiteralNumber => SyntaxKind::TerminalLiteralNumber,
@@ -425,6 +432,7 @@ fn token_kind_to_terminal_syntax_kind(kind: TokenKind) -> SyntaxKind {
         TokenKind::Match => SyntaxKind::TerminalMatch,
         TokenKind::If => SyntaxKind::TerminalIf,
         TokenKind::Loop => SyntaxKind::TerminalLoop,
+        TokenKind::Continue => SyntaxKind::TerminalContinue,
         TokenKind::Break => SyntaxKind::TerminalBreak,
         TokenKind::Else => SyntaxKind::TerminalElse,
         TokenKind::Use => SyntaxKind::TerminalUse,
@@ -443,6 +451,7 @@ fn token_kind_to_terminal_syntax_kind(kind: TokenKind) -> SyntaxKind {
         TokenKind::LE => SyntaxKind::TerminalLE,
         TokenKind::LT => SyntaxKind::TerminalLT,
         TokenKind::Not => SyntaxKind::TerminalNot,
+        TokenKind::BitNot => SyntaxKind::TerminalBitNot,
         TokenKind::Plus => SyntaxKind::TerminalPlus,
         TokenKind::PlusEq => SyntaxKind::TerminalPlusEq,
         TokenKind::Minus => SyntaxKind::TerminalMinus,

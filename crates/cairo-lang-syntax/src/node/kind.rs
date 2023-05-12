@@ -56,6 +56,7 @@ pub enum SyntaxKind {
     StatementLet,
     OptionTerminalSemicolonEmpty,
     StatementExpr,
+    StatementContinue,
     StatementReturn,
     StatementBreak,
     Param,
@@ -69,6 +70,7 @@ pub enum SyntaxKind {
     Member,
     MemberList,
     ItemList,
+    ItemMissing,
     Attribute,
     AttributeList,
     ItemModule,
@@ -81,14 +83,23 @@ pub enum SyntaxKind {
     ItemTrait,
     TraitBody,
     TraitItemList,
+    TraitItemMissing,
     TraitItemFunction,
     ItemImpl,
     ImplBody,
+    ImplItemList,
+    ImplItemMissing,
     ItemImplAlias,
     ItemStruct,
     ItemEnum,
     ItemTypeAlias,
     ItemUse,
+    UsePathLeaf,
+    UsePathSingle,
+    UsePathMulti,
+    UsePathList,
+    AliasClause,
+    OptionAliasClauseEmpty,
     GenericArgExpr,
     GenericArgs,
     GenericArgList,
@@ -104,6 +115,8 @@ pub enum SyntaxKind {
     TerminalLiteralNumber,
     TokenShortString,
     TerminalShortString,
+    TokenAs,
+    TerminalAs,
     TokenConst,
     TerminalConst,
     TokenElse,
@@ -138,6 +151,8 @@ pub enum SyntaxKind {
     TerminalOf,
     TokenRef,
     TerminalRef,
+    TokenContinue,
+    TerminalContinue,
     TokenReturn,
     TerminalReturn,
     TokenBreak,
@@ -216,6 +231,8 @@ pub enum SyntaxKind {
     TerminalNeq,
     TokenNot,
     TerminalNot,
+    TokenBitNot,
+    TerminalBitNot,
     TokenOr,
     TerminalOr,
     TokenOrOr,
@@ -252,6 +269,7 @@ impl SyntaxKind {
             SyntaxKind::TokenIdentifier
                 | SyntaxKind::TokenLiteralNumber
                 | SyntaxKind::TokenShortString
+                | SyntaxKind::TokenAs
                 | SyntaxKind::TokenConst
                 | SyntaxKind::TokenElse
                 | SyntaxKind::TokenEnum
@@ -269,6 +287,7 @@ impl SyntaxKind {
                 | SyntaxKind::TokenNoPanic
                 | SyntaxKind::TokenOf
                 | SyntaxKind::TokenRef
+                | SyntaxKind::TokenContinue
                 | SyntaxKind::TokenReturn
                 | SyntaxKind::TokenBreak
                 | SyntaxKind::TokenStruct
@@ -308,6 +327,7 @@ impl SyntaxKind {
                 | SyntaxKind::TokenMulEq
                 | SyntaxKind::TokenNeq
                 | SyntaxKind::TokenNot
+                | SyntaxKind::TokenBitNot
                 | SyntaxKind::TokenOr
                 | SyntaxKind::TokenOrOr
                 | SyntaxKind::TokenPlus
@@ -332,6 +352,7 @@ impl SyntaxKind {
             SyntaxKind::TerminalIdentifier
                 | SyntaxKind::TerminalLiteralNumber
                 | SyntaxKind::TerminalShortString
+                | SyntaxKind::TerminalAs
                 | SyntaxKind::TerminalConst
                 | SyntaxKind::TerminalElse
                 | SyntaxKind::TerminalEnum
@@ -349,6 +370,7 @@ impl SyntaxKind {
                 | SyntaxKind::TerminalNoPanic
                 | SyntaxKind::TerminalOf
                 | SyntaxKind::TerminalRef
+                | SyntaxKind::TerminalContinue
                 | SyntaxKind::TerminalReturn
                 | SyntaxKind::TerminalBreak
                 | SyntaxKind::TerminalStruct
@@ -388,6 +410,7 @@ impl SyntaxKind {
                 | SyntaxKind::TerminalMulEq
                 | SyntaxKind::TerminalNeq
                 | SyntaxKind::TerminalNot
+                | SyntaxKind::TerminalBitNot
                 | SyntaxKind::TerminalOr
                 | SyntaxKind::TerminalOrOr
                 | SyntaxKind::TerminalPlus
@@ -404,7 +427,8 @@ impl SyntaxKind {
     pub fn is_keyword_token(&self) -> bool {
         matches!(
             *self,
-            SyntaxKind::TokenConst
+            SyntaxKind::TokenAs
+                | SyntaxKind::TokenConst
                 | SyntaxKind::TokenElse
                 | SyntaxKind::TokenEnum
                 | SyntaxKind::TokenExtern
@@ -421,6 +445,7 @@ impl SyntaxKind {
                 | SyntaxKind::TokenNoPanic
                 | SyntaxKind::TokenOf
                 | SyntaxKind::TokenRef
+                | SyntaxKind::TokenContinue
                 | SyntaxKind::TokenReturn
                 | SyntaxKind::TokenBreak
                 | SyntaxKind::TokenStruct
@@ -433,7 +458,8 @@ impl SyntaxKind {
     pub fn is_keyword_terminal(&self) -> bool {
         matches!(
             *self,
-            SyntaxKind::TerminalConst
+            SyntaxKind::TerminalAs
+                | SyntaxKind::TerminalConst
                 | SyntaxKind::TerminalElse
                 | SyntaxKind::TerminalEnum
                 | SyntaxKind::TerminalExtern
@@ -450,6 +476,7 @@ impl SyntaxKind {
                 | SyntaxKind::TerminalNoPanic
                 | SyntaxKind::TerminalOf
                 | SyntaxKind::TerminalRef
+                | SyntaxKind::TerminalContinue
                 | SyntaxKind::TerminalReturn
                 | SyntaxKind::TerminalBreak
                 | SyntaxKind::TerminalStruct

@@ -1,6 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
+use cairo_lang_utils::casts::IntoOrPanic;
 use cairo_lang_utils::extract_matches;
 use num_bigint::BigInt;
 use num_traits::One;
@@ -54,8 +55,11 @@ impl State {
     /// Validates that the state is valid, as it had enough ap change.
     fn validate_finality(&self) {
         assert!(
-            self.ap_change >= self.allocated as usize,
-            "Not enough commands to update ap, add `add_ap` calls."
+            self.ap_change >= self.allocated.into_or_panic(),
+            "Not enough instructions to update ap. Add an `ap += *` instruction. ap_change: {}, \
+             allocated: {}",
+            self.ap_change,
+            self.allocated,
         );
     }
 
@@ -233,32 +237,38 @@ impl CasmBuilder {
     pub fn add_hint<
         const INPUTS_COUNT: usize,
         const OUTPUTS_COUNT: usize,
-        F: FnOnce([ResOperand; INPUTS_COUNT], [CellRef; OUTPUTS_COUNT]) -> Hint,
+        THint: Into<Hint>,
+        F: FnOnce([ResOperand; INPUTS_COUNT], [CellRef; OUTPUTS_COUNT]) -> THint,
     >(
         &mut self,
         f: F,
         inputs: [Var; INPUTS_COUNT],
         outputs: [Var; OUTPUTS_COUNT],
     ) {
-        self.current_hints.push(f(
-            inputs.map(|v| match self.get_value(v, true) {
-                CellExpression::Deref(cell) => ResOperand::Deref(cell),
-                CellExpression::DoubleDeref(cell, offset) => ResOperand::DoubleDeref(cell, offset),
-                CellExpression::Immediate(imm) => imm.into(),
-                CellExpression::BinOp { op, a: other, b } => match op {
-                    CellOperator::Add => {
-                        ResOperand::BinOp(BinOpOperand { op: Operation::Add, a: other, b })
+        self.current_hints.push(
+            f(
+                inputs.map(|v| match self.get_value(v, true) {
+                    CellExpression::Deref(cell) => ResOperand::Deref(cell),
+                    CellExpression::DoubleDeref(cell, offset) => {
+                        ResOperand::DoubleDeref(cell, offset)
                     }
-                    CellOperator::Mul => {
-                        ResOperand::BinOp(BinOpOperand { op: Operation::Mul, a: other, b })
-                    }
-                    CellOperator::Sub | CellOperator::Div => {
-                        panic!("hints to non ResOperand references are not supported.")
-                    }
-                },
-            }),
-            outputs.map(|v| self.as_cell_ref(v, true)),
-        ));
+                    CellExpression::Immediate(imm) => imm.into(),
+                    CellExpression::BinOp { op, a: other, b } => match op {
+                        CellOperator::Add => {
+                            ResOperand::BinOp(BinOpOperand { op: Operation::Add, a: other, b })
+                        }
+                        CellOperator::Mul => {
+                            ResOperand::BinOp(BinOpOperand { op: Operation::Mul, a: other, b })
+                        }
+                        CellOperator::Sub | CellOperator::Div => {
+                            panic!("hints to non ResOperand references are not supported.")
+                        }
+                    },
+                }),
+                outputs.map(|v| self.as_cell_ref(v, true)),
+            )
+            .into(),
+        );
     }
 
     /// Adds an assertion that `dst = res`.
@@ -346,6 +356,12 @@ impl CasmBuilder {
         );
         self.statements.push(Statement::Final(instruction));
         self.main_state.ap_change += size;
+    }
+
+    /// Increases the AP change by `size`, without adding an instruction.
+    pub fn increase_ap_change(&mut self, amount: usize) {
+        self.main_state.ap_change += amount;
+        self.main_state.allocated += amount.into_or_panic::<i16>();
     }
 
     /// Returns a variable that is the `op` of `lhs` and `rhs`.
@@ -801,7 +817,7 @@ macro_rules! casm_build_extend {
             $($output_name:ident : $output_value:ident),*
         }; $($tok:tt)*) => {
         $builder.add_hint(
-            |[$($input_name),*], [$($output_name),*]| $crate::hints::Hint::$hint_name {
+            |[$($input_name),*], [$($output_name),*]| $crate::hints::CoreHint::$hint_name {
                 $($input_name,)* $($output_name,)*
             },
             [$($input_value,)*],
@@ -810,11 +826,20 @@ macro_rules! casm_build_extend {
         $crate::casm_build_extend!($builder, $($tok)*)
     };
     ($builder:ident, hint $hint_name:ident {
-        $buffer_name:ident : $buffer_value:ident
+        $($arg_name:ident : $arg_value:ident),*
     }; $($tok:tt)*) => {
         $builder.add_hint(
-            |[$buffer_name], []| $crate::hints::Hint::$hint_name { $buffer_name },
-            [$buffer_value], []
+            |[$($arg_name),*], []| $crate::hints::CoreHint::$hint_name { $($arg_name),* },
+            [$($arg_value),*], []
+        );
+        $crate::casm_build_extend!($builder, $($tok)*)
+    };
+    ($builder:ident, hint $hint_lead:ident::$hint_name:ident {
+        $($arg_name:ident : $arg_value:ident),*
+    }; $($tok:tt)*) => {
+        $builder.add_hint(
+            |[$($arg_name),*], []| $hint_lead::$hint_name { $($arg_name),* },
+            [$($arg_value),*], []
         );
         $crate::casm_build_extend!($builder, $($tok)*)
     };

@@ -1,10 +1,4 @@
 = Block expression
-TODO
-
-[source,bnf]
-----
-BLOCK_EXPR : { STMT* }
-----
 
 A block expression, or block, is a control flow expression. As a control flow expression, a block
 sequentially executes its component statements and then its optional tail expression.
@@ -24,7 +18,7 @@ Otherwise, if the last statement is a xref:never-type.adoc[never type] emitting 
 return, break) the block's type is the xref:never-type.adoc[never type], otherwise it is the
 xref:unit-type.adoc[unit type].
 
-[source,cairo]
+[source,rust]
 ----
 // Evaluated to unit-type.
 let _: () = {

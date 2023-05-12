@@ -14,6 +14,7 @@ use id_arena::Arena;
 use itertools::{zip_eq, Itertools};
 use semantic::expr::inference::InferenceError;
 use semantic::types::wrap_in_snapshots;
+use semantic::ExprVarMemberPath;
 use {cairo_lang_defs as defs, cairo_lang_semantic as semantic};
 
 use super::block_builder::{BlockBuilder, SealedBlockBuilder};
@@ -137,6 +138,8 @@ pub struct LoweringContext<'a, 'db> {
     /// Id for the current concrete function to be used when generating recursive calls.
     /// This it the generic function specialized with its own generic parameters.
     pub concrete_function_id: ConcreteFunctionWithBodyId,
+    /// Current loop expression needed for recursive calls in `continue`
+    pub current_loop_expr: Option<semantic::ExprLoop>,
     /// Current emitted diagnostics.
     pub diagnostics: LoweringDiagnostics,
     /// Lowered blocks of the function.
@@ -161,6 +164,7 @@ impl<'a, 'db> LoweringContext<'a, 'db> {
             signature,
             function_id,
             concrete_function_id,
+            current_loop_expr: Option::None,
             diagnostics: LoweringDiagnostics::new(module_file_id),
             blocks: Default::default(),
         })
@@ -208,7 +212,7 @@ pub enum LoweredExpr {
     },
     /// The expression value is an enum result from an extern call.
     ExternEnum(LoweredExprExternEnum),
-    SemanticVar(semantic::VarId, StableLocationOption),
+    Member(ExprVarMemberPath, StableLocationOption),
     Snapshot {
         expr: Box<LoweredExpr>,
         location: StableLocationOption,
@@ -233,15 +237,15 @@ impl LoweredExpr {
                     .add(ctx, &mut builder.statements))
             }
             LoweredExpr::ExternEnum(extern_enum) => extern_enum.var(ctx, builder),
-            LoweredExpr::SemanticVar(semantic_var_id, location) => {
-                Ok(builder.get_semantic(ctx, semantic_var_id, location))
+            LoweredExpr::Member(member_path, _location) => {
+                Ok(builder.get_ref(ctx, &member_path).unwrap())
             }
             LoweredExpr::Snapshot { expr, location } => {
                 let (original, snapshot) =
                     generators::Snapshot { input: expr.clone().var(ctx, builder)?, location }
                         .add(ctx, &mut builder.statements);
-                if let LoweredExpr::SemanticVar(semantic_var_id, _location) = &*expr {
-                    builder.put_semantic(*semantic_var_id, original);
+                if let LoweredExpr::Member(member_path, _location) = &*expr {
+                    builder.update_ref(ctx, member_path, original);
                 }
 
                 Ok(snapshot)
@@ -259,9 +263,7 @@ impl LoweredExpr {
                     extern_enum.concrete_enum_id,
                 )))
             }
-            LoweredExpr::SemanticVar(semantic_var_id, _) => {
-                ctx.semantic_defs[*semantic_var_id].ty()
-            }
+            LoweredExpr::Member(member_path, _) => member_path.ty(),
             LoweredExpr::Snapshot { expr, .. } => {
                 wrap_in_snapshots(ctx.db.upcast(), expr.ty(ctx), 1)
             }

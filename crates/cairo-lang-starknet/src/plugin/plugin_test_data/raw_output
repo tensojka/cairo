@@ -40,6 +40,7 @@ mod TestContract {
         ArrayTrait::new().span()
     }
 
+    const TEST_CLASS_HASH: felt252 = 1595346637997809727776061868410989672215034814070995454976363664880494301941;
     
 
     
@@ -61,6 +62,7 @@ mod TestContract {
         use option::OptionTrait;
         use option::OptionTraitImpl;
 
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn test_raw_output(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');
@@ -76,6 +78,7 @@ mod TestContract {
             gas::withdraw_gas_all(get_builtin_costs()).expect('Out of gas');
             super::test_raw_output()
         }
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn test_raw_output_with_spaces(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');

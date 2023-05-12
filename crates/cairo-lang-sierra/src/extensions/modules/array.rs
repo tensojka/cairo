@@ -16,7 +16,7 @@ use crate::extensions::{
 use crate::ids::{ConcreteTypeId, GenericTypeId};
 use crate::program::GenericArg;
 
-type ArrayIndexType = super::uint::Uint32Type;
+type ArrayIndexType = super::int::unsigned::Uint32Type;
 
 /// Type representing an array.
 #[derive(Default)]
@@ -67,7 +67,7 @@ impl SignatureOnlyGenericLibfunc for ArrayNewLibfunc {
             vec![],
             vec![OutputVarInfo {
                 ty: context.get_wrapped_concrete_type(ArrayType::id(), ty)?,
-                ref_info: OutputVarReferenceInfo::NewTempVar { idx: None },
+                ref_info: OutputVarReferenceInfo::SimpleDerefs,
             }],
             SierraApChange::Known { new_vars_only: false },
         ))
@@ -112,12 +112,7 @@ impl SignatureAndTypeGenericLibfunc for ArrayAppendLibfuncWrapped {
         let arr_ty = context.get_wrapped_concrete_type(ArrayType::id(), ty.clone())?;
         Ok(LibfuncSignature::new_non_branch_ex(
             vec![
-                ParamSignature {
-                    ty: arr_ty.clone(),
-                    allow_deferred: false,
-                    allow_add_const: true,
-                    allow_const: false,
-                },
+                ParamSignature::new(arr_ty.clone()).with_allow_add_const(),
                 ParamSignature::new(ty),
             ],
             vec![OutputVarInfo {

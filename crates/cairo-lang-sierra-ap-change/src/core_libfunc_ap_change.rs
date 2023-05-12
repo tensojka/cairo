@@ -9,10 +9,16 @@ use cairo_lang_sierra::extensions::enm::EnumConcreteLibfunc;
 use cairo_lang_sierra::extensions::felt252::{
     Felt252BinaryOperationConcrete, Felt252BinaryOperator, Felt252Concrete,
 };
-use cairo_lang_sierra::extensions::felt252_dict::Felt252DictConcreteLibfunc;
+use cairo_lang_sierra::extensions::felt252_dict::{
+    Felt252DictConcreteLibfunc, Felt252DictEntryConcreteLibfunc,
+};
 use cairo_lang_sierra::extensions::gas::{
     BuiltinCostWithdrawGasLibfunc, CostTokenType, GasConcreteLibfunc,
 };
+use cairo_lang_sierra::extensions::int::unsigned::{UintConcrete, UintMulTraits};
+use cairo_lang_sierra::extensions::int::unsigned128::Uint128Concrete;
+use cairo_lang_sierra::extensions::int::unsigned256::Uint256Concrete;
+use cairo_lang_sierra::extensions::int::IntOperator;
 use cairo_lang_sierra::extensions::is_zero::IsZeroTraits;
 use cairo_lang_sierra::extensions::mem::MemConcreteLibfunc;
 use cairo_lang_sierra::extensions::nullable::NullableConcreteLibfunc;
@@ -20,9 +26,6 @@ use cairo_lang_sierra::extensions::pedersen::PedersenConcreteLibfunc;
 use cairo_lang_sierra::extensions::poseidon::PoseidonConcreteLibfunc;
 use cairo_lang_sierra::extensions::starknet::StarkNetConcreteLibfunc;
 use cairo_lang_sierra::extensions::structure::StructConcreteLibfunc;
-use cairo_lang_sierra::extensions::uint::{IntOperator, UintConcrete, UintMulTraits};
-use cairo_lang_sierra::extensions::uint128::Uint128Concrete;
-use cairo_lang_sierra::extensions::uint256::Uint256Concrete;
 use cairo_lang_sierra::ids::ConcreteTypeId;
 
 use crate::ApChange;
@@ -98,7 +101,7 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             EcConcreteLibfunc::StateAdd(_) => vec![ApChange::Known(9)],
             EcConcreteLibfunc::TryNew(_) => vec![ApChange::Known(6), ApChange::Known(6)],
             EcConcreteLibfunc::StateFinalize(_) => vec![ApChange::Known(11), ApChange::Known(3)],
-            EcConcreteLibfunc::StateInit(_) => vec![ApChange::Known(8)],
+            EcConcreteLibfunc::StateInit(_) => vec![ApChange::Known(7)],
             EcConcreteLibfunc::StateAddMul(_) => vec![ApChange::Known(0)],
             EcConcreteLibfunc::PointFromX(_) => vec![ApChange::Known(11), ApChange::Known(7)],
             EcConcreteLibfunc::UnwrapPoint(_) => vec![ApChange::Known(0)],
@@ -148,20 +151,21 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
                 }
             },
             Uint128Concrete::Divmod(_) => vec![ApChange::Known(7)],
-            Uint128Concrete::WideMul(_) => vec![ApChange::Known(17)],
-            Uint128Concrete::LessThan(_) => vec![ApChange::Known(2), ApChange::Known(3)],
+            Uint128Concrete::GuaranteeMul(_) => vec![ApChange::Known(2)],
+            Uint128Concrete::MulGuaranteeVerify(_) => vec![ApChange::Known(15)],
             Uint128Concrete::Equal(_) => vec![ApChange::Known(1), ApChange::Known(1)],
             Uint128Concrete::SquareRoot(_) => vec![ApChange::Known(6)],
-            Uint128Concrete::LessThanOrEqual(_) => vec![ApChange::Known(3), ApChange::Known(2)],
             Uint128Concrete::FromFelt252(_) => vec![ApChange::Known(1), ApChange::Known(6)],
             Uint128Concrete::Const(_) | Uint128Concrete::ToFelt252(_) => {
                 vec![ApChange::Known(0)]
             }
             Uint128Concrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
+            Uint128Concrete::ByteReverse(_) => vec![ApChange::Known(17)],
         },
         CoreConcreteLibfunc::Uint256(libfunc) => match libfunc {
             Uint256Concrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
-            Uint256Concrete::Divmod(_) => vec![ApChange::Known(41)],
+            Uint256Concrete::Divmod(_) => vec![ApChange::Known(43)],
+            Uint256Concrete::SquareRoot(_) => vec![ApChange::Known(27)],
         },
         CoreConcreteLibfunc::Mem(libfunc) => match libfunc {
             MemConcreteLibfunc::StoreTemp(libfunc) => {
@@ -193,8 +197,6 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
         },
         CoreConcreteLibfunc::Felt252Dict(libfunc) => match libfunc {
             Felt252DictConcreteLibfunc::New(_) => vec![ApChange::Known(6)],
-            Felt252DictConcreteLibfunc::Read(_) => vec![ApChange::Known(1)],
-            Felt252DictConcreteLibfunc::Write(_) => vec![ApChange::Known(0)],
             Felt252DictConcreteLibfunc::Squash(_) => vec![ApChange::Unknown],
         },
         CoreConcreteLibfunc::Pedersen(libfunc) => match libfunc {
@@ -227,9 +229,11 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
             | StarkNetConcreteLibfunc::EmitEvent(_)
             | StarkNetConcreteLibfunc::GetExecutionInfo(_)
             | StarkNetConcreteLibfunc::Deploy(_)
+            | StarkNetConcreteLibfunc::Keccak(_)
             | StarkNetConcreteLibfunc::LibraryCall(_)
             | StarkNetConcreteLibfunc::ReplaceClass(_)
-            | StarkNetConcreteLibfunc::SendMessageToL1(_) => {
+            | StarkNetConcreteLibfunc::SendMessageToL1(_)
+            | StarkNetConcreteLibfunc::Secp256K1(_) => {
                 vec![ApChange::Known(2), ApChange::Known(2)]
             }
             StarkNetConcreteLibfunc::Testing(_) => vec![ApChange::Known(0)],
@@ -243,6 +247,10 @@ pub fn core_libfunc_ap_change<InfoProvider: InvocationApChangeInfoProvider>(
         },
         CoreConcreteLibfunc::Debug(_) => vec![ApChange::Known(0)],
         CoreConcreteLibfunc::SnapshotTake(_) => vec![ApChange::Known(0)],
+        CoreConcreteLibfunc::Felt252DictEntry(libfunc) => match libfunc {
+            Felt252DictEntryConcreteLibfunc::Get(_) => vec![ApChange::Known(0)],
+            Felt252DictEntryConcreteLibfunc::Finalize(_) => vec![ApChange::Known(0)],
+        },
     }
 }
 
@@ -257,13 +265,11 @@ fn uint_ap_change<TUintTraits: UintMulTraits + IsZeroTraits>(
                 vec![ApChange::Known(3), ApChange::Known(3)]
             }
             IntOperator::OverflowingSub => {
-                vec![ApChange::Known(2), ApChange::Known(4)]
+                vec![ApChange::Known(2), ApChange::Known(3)]
             }
         },
-        UintConcrete::LessThan(_) => vec![ApChange::Known(2), ApChange::Known(3)],
         UintConcrete::SquareRoot(_) => vec![ApChange::Known(6)],
         UintConcrete::Equal(_) => vec![ApChange::Known(1), ApChange::Known(1)],
-        UintConcrete::LessThanOrEqual(_) => vec![ApChange::Known(3), ApChange::Known(2)],
         UintConcrete::FromFelt252(_) => vec![ApChange::Known(2), ApChange::Known(7)],
         UintConcrete::IsZero(_) => vec![ApChange::Known(0), ApChange::Known(0)],
         UintConcrete::Divmod(_) => vec![ApChange::Known(5)],

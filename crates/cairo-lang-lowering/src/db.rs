@@ -142,10 +142,6 @@ pub trait LoweringGroup: SemanticGroup + Upcast<dyn SemanticGroup> {
     #[salsa::invoke(crate::implicits::scc_implicits)]
     fn scc_implicits(&self, function: ConcreteSCCRepresentative) -> Maybe<Vec<TypeId>>;
 
-    /// An array that sets the precedence of implicit types.
-    #[salsa::input]
-    fn implicit_precedence(&self) -> Arc<Vec<TypeId>>;
-
     // ### Queries related to panics ###
 
     /// Returns whether the function may panic.
@@ -263,11 +259,6 @@ pub trait LoweringGroup: SemanticGroup + Upcast<dyn SemanticGroup> {
         &self,
         function: ConcreteSCCRepresentative,
     ) -> Maybe<HashSet<ids::ConcreteFunctionWithBodyId>>;
-}
-
-pub fn init_lowering_group(db: &mut (dyn LoweringGroup + 'static)) {
-    // Initialize inputs.
-    db.set_implicit_precedence(Arc::new(vec![]));
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]

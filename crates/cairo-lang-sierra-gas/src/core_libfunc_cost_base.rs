@@ -10,12 +10,18 @@ use cairo_lang_sierra::extensions::enm::EnumConcreteLibfunc;
 use cairo_lang_sierra::extensions::felt252::{
     Felt252BinaryOperationConcrete, Felt252BinaryOperator, Felt252Concrete,
 };
-use cairo_lang_sierra::extensions::felt252_dict::Felt252DictConcreteLibfunc;
+use cairo_lang_sierra::extensions::felt252_dict::{
+    Felt252DictConcreteLibfunc, Felt252DictEntryConcreteLibfunc,
+};
 use cairo_lang_sierra::extensions::function_call::FunctionCallConcreteLibfunc;
 use cairo_lang_sierra::extensions::gas::GasConcreteLibfunc::{
     BuiltinWithdrawGas, GetAvailableGas, GetBuiltinCosts, RedepositGas, WithdrawGas,
 };
 use cairo_lang_sierra::extensions::gas::{BuiltinCostWithdrawGasLibfunc, CostTokenType};
+use cairo_lang_sierra::extensions::int::unsigned::{UintConcrete, UintMulTraits};
+use cairo_lang_sierra::extensions::int::unsigned128::Uint128Concrete;
+use cairo_lang_sierra::extensions::int::unsigned256::Uint256Concrete;
+use cairo_lang_sierra::extensions::int::IntOperator;
 use cairo_lang_sierra::extensions::is_zero::IsZeroTraits;
 use cairo_lang_sierra::extensions::mem::MemConcreteLibfunc::{
     AllocLocal, FinalizeLocals, Rename, StoreLocal, StoreTemp,
@@ -24,30 +30,30 @@ use cairo_lang_sierra::extensions::nullable::NullableConcreteLibfunc;
 use cairo_lang_sierra::extensions::pedersen::PedersenConcreteLibfunc;
 use cairo_lang_sierra::extensions::poseidon::PoseidonConcreteLibfunc;
 use cairo_lang_sierra::extensions::structure::StructConcreteLibfunc;
-use cairo_lang_sierra::extensions::uint::{IntOperator, UintConcrete, UintMulTraits};
-use cairo_lang_sierra::extensions::uint128::Uint128Concrete;
-use cairo_lang_sierra::extensions::uint256::Uint256Concrete;
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::Function;
+use cairo_lang_utils::casts::IntoOrPanic;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use itertools::{chain, Itertools};
 
 use crate::objects::{BranchCost, ConstCost, CostInfoProvider, PreCost};
 use crate::starknet_libfunc_cost_base::starknet_libfunc_cost_base;
 
-// The costs of the dict_squash libfunc, divided into different parts.
-/// The cost per each unique key in the dictionary.
+/// The cost per each unique key in the dictionary. This cost is pre-charged for each access
+/// (read/write/entry), and the overhead cost is refunded for each repeated access.
+/// Repeated access is access to a key that has already been accessed before.
 pub const DICT_SQUASH_UNIQUE_KEY_COST: ConstCost =
-    ConstCost { steps: 52, holes: 0, range_checks: 6 };
+    ConstCost { steps: 46, holes: 0, range_checks: 6 };
 /// The cost per each access to a key after the first access.
 pub const DICT_SQUASH_REPEATED_ACCESS_COST: ConstCost =
     ConstCost { steps: 9, holes: 0, range_checks: 1 };
 /// The cost not dependent on the number of keys and access.
 pub const DICT_SQUASH_FIXED_COST: ConstCost = ConstCost { steps: 57, holes: 0, range_checks: 3 };
-/// The cost to charge per each read/write access. `DICT_SQUASH_UNIQUE_KEY_COST` is refunded for
-/// each repeated access in dict_squash.
-pub const DICT_SQUASH_ACCESS_COST: ConstCost =
-    DICT_SQUASH_UNIQUE_KEY_COST.add(DICT_SQUASH_REPEATED_ACCESS_COST);
+
+/// The cost of allocating a segment in the segment arena. This is charged to pay for the
+/// finalization step of the segment arena.
+pub const SEGMENT_ARENA_ALLOCATION_COST: ConstCost =
+    ConstCost { steps: 8, holes: 0, range_checks: 0 };
 
 /// The operation required for extracting a libfunc's cost.
 pub trait CostOperations {
@@ -147,7 +153,7 @@ pub fn core_libfunc_cost(
             EcConcreteLibfunc::StateAdd(_) => vec![steps(10).into()],
             EcConcreteLibfunc::TryNew(_) => vec![steps(7).into(), steps(7).into()],
             EcConcreteLibfunc::StateFinalize(_) => vec![steps(12).into(), steps(6).into()],
-            EcConcreteLibfunc::StateInit(_) => vec![steps(8).into()],
+            EcConcreteLibfunc::StateInit(_) => vec![steps(7).into()],
             EcConcreteLibfunc::StateAddMul(_) => {
                 vec![BranchCost::Regular {
                     const_cost: steps(5),
@@ -279,24 +285,19 @@ pub fn core_libfunc_cost(
         }
         Felt252Dict(libfunc) => match libfunc {
             Felt252DictConcreteLibfunc::New(_) => {
-                vec![steps(9).into()]
-            }
-            Felt252DictConcreteLibfunc::Read(_) => {
-                vec![(steps(3) + DICT_SQUASH_ACCESS_COST).into()]
-            }
-            Felt252DictConcreteLibfunc::Write(_) => {
-                vec![(steps(2) + DICT_SQUASH_ACCESS_COST).into()]
+                vec![(steps(9) + SEGMENT_ARENA_ALLOCATION_COST).into()]
             }
             Felt252DictConcreteLibfunc::Squash(_) => {
-                // Dict squash have a fixed cost of 'DICT_SQUASH_CONST_COST' +
-                // `DICT_SQUASH_ACCESS_COST` for each dict access. Only the fixed
-                // cost is charged here, so that we would alway be able to call
-                // squash even if running out of gas. The cost of the processing of
-                // the first key is `DICT_SQUASH_ACCESS_COST`, and each access for
-                // an existing key costs only 'DICT_SQUASH_REPEATED_ACCESS_COST'. In
-                // each read/write we charge `DICT_SQUASH_ACCESS_COST` gas and
-                // `DICT_SQUASH_ACCESS_COST - DICT_SQUASH_REPEATED_ACCESS_COST` gas are refunded per
-                // each successive access in dict squash.
+                // The `dict_squash` operation incurs a fixed cost of `DICT_SQUASH_CONST_COST`,
+                // plus an additional cost of `DICT_SQUASH_UNIQUE_KEY_COST` for each read or write
+                // access to the dictionary. However, the true cost of processing each unique key
+                // is `DICT_SQUASH_UNIQUE_KEY_COST`, while accessing an existing key incurs a lower
+                // cost of `DICT_SQUASH_REPEATED_ACCESS_COST`.
+                //
+                // To accurately reflect these costs, we charge `DICT_SQUASH_UNIQUE_KEY_COST`
+                // for each read or write access, and within the `dict_squash` operation an amount
+                // of `DICT_SQUASH_UNIQUE_KEY_COST - DICT_SQUASH_REPEATED_ACCESS_COST` is refunded
+                // for each subsequent access to an existing key.
                 vec![DICT_SQUASH_FIXED_COST.into()]
             }
         },
@@ -324,6 +325,12 @@ pub fn core_libfunc_cost(
         },
         CoreConcreteLibfunc::Debug(_) => vec![steps(1).into()],
         CoreConcreteLibfunc::SnapshotTake(_) => vec![steps(0).into()],
+        CoreConcreteLibfunc::Felt252DictEntry(libfunc) => match libfunc {
+            Felt252DictEntryConcreteLibfunc::Get(_) => {
+                vec![(steps(1) + DICT_SQUASH_UNIQUE_KEY_COST).into()]
+            }
+            Felt252DictEntryConcreteLibfunc::Finalize(_) => vec![steps(1).into()],
+        },
     }
 }
 
@@ -366,7 +373,8 @@ pub fn core_libfunc_postcost<Ops: CostOperations, InfoProvider: InvocationCostIn
                     let cost_computation =
                         BuiltinCostWithdrawGasLibfunc::cost_computation_steps(|token_type| {
                             info_provider.token_usages(token_type)
-                        }) as i32;
+                        })
+                        .into_or_panic();
                     res = ops.add(res, ops.steps(cost_computation));
                 }
                 if success {
@@ -457,27 +465,15 @@ fn uint_libfunc_cost<TUintTraits: IsZeroTraits + UintMulTraits>(
             IntOperator::OverflowingSub => {
                 vec![
                     ConstCost { steps: 3, holes: 0, range_checks: 1 },
-                    ConstCost { steps: 6, holes: 0, range_checks: 1 },
+                    ConstCost { steps: 5, holes: 0, range_checks: 1 },
                 ]
             }
         },
-        UintConcrete::LessThan(_) => {
-            vec![
-                ConstCost { steps: 3, holes: 0, range_checks: 1 },
-                ConstCost { steps: 5, holes: 0, range_checks: 1 },
-            ]
-        }
         UintConcrete::SquareRoot(_) => {
             vec![ConstCost { steps: 9, holes: 0, range_checks: 4 }]
         }
         UintConcrete::Equal(_) => {
             vec![steps(2), steps(3)]
-        }
-        UintConcrete::LessThanOrEqual(_) => {
-            vec![
-                ConstCost { steps: 4, holes: 0, range_checks: 1 },
-                ConstCost { steps: 4, holes: 0, range_checks: 1 },
-            ]
         }
         UintConcrete::FromFelt252(_) => {
             vec![
@@ -493,53 +489,50 @@ fn uint_libfunc_cost<TUintTraits: IsZeroTraits + UintMulTraits>(
 }
 
 /// Returns costs for u128 libfuncs.
-fn u128_libfunc_cost(libfunc: &Uint128Concrete) -> Vec<ConstCost> {
+fn u128_libfunc_cost(libfunc: &Uint128Concrete) -> Vec<BranchCost> {
     let steps = |value| ConstCost { steps: value, ..Default::default() };
     match libfunc {
         Uint128Concrete::Operation(libfunc) => match libfunc.operator {
             IntOperator::OverflowingAdd | IntOperator::OverflowingSub => {
                 vec![
-                    ConstCost { steps: 3, holes: 0, range_checks: 1 },
-                    ConstCost { steps: 5, holes: 0, range_checks: 1 },
+                    ConstCost { steps: 3, holes: 0, range_checks: 1 }.into(),
+                    ConstCost { steps: 5, holes: 0, range_checks: 1 }.into(),
                 ]
             }
         },
         Uint128Concrete::Divmod(_) => {
-            vec![ConstCost { steps: 11, holes: 0, range_checks: 4 }]
+            vec![ConstCost { steps: 11, holes: 0, range_checks: 4 }.into()]
         }
-        Uint128Concrete::WideMul(_) => {
-            vec![ConstCost { steps: 23, holes: 0, range_checks: 9 }]
+        Uint128Concrete::GuaranteeMul(_) => {
+            vec![steps(1).into()]
+        }
+        Uint128Concrete::MulGuaranteeVerify(_) => {
+            vec![ConstCost { steps: 23, holes: 0, range_checks: 9 }.into()]
         }
         Uint128Concrete::Const(_) | Uint128Concrete::ToFelt252(_) => {
-            vec![Default::default()]
+            vec![ConstCost::default().into()]
         }
         Uint128Concrete::FromFelt252(_) => {
             vec![
-                ConstCost { steps: 2, holes: 0, range_checks: 1 },
-                ConstCost { steps: 11, holes: 0, range_checks: 3 },
+                ConstCost { steps: 2, holes: 0, range_checks: 1 }.into(),
+                ConstCost { steps: 11, holes: 0, range_checks: 3 }.into(),
             ]
         }
         Uint128Concrete::IsZero(_) => {
-            vec![steps(1), steps(1)]
-        }
-        Uint128Concrete::LessThan(_) => {
-            vec![
-                ConstCost { steps: 3, holes: 0, range_checks: 1 },
-                ConstCost { steps: 5, holes: 0, range_checks: 1 },
-            ]
+            vec![steps(1).into(), steps(1).into()]
         }
         Uint128Concrete::Equal(_) => {
-            vec![steps(2), steps(3)]
+            vec![steps(2).into(), steps(3).into()]
         }
         Uint128Concrete::SquareRoot(_) => {
-            vec![ConstCost { steps: 9, holes: 0, range_checks: 4 }]
+            vec![ConstCost { steps: 9, holes: 0, range_checks: 4 }.into()]
         }
-        Uint128Concrete::LessThanOrEqual(_) => {
-            vec![
-                ConstCost { steps: 4, holes: 0, range_checks: 1 },
-                ConstCost { steps: 4, holes: 0, range_checks: 1 },
-            ]
-        }
+        Uint128Concrete::ByteReverse(_) => vec![BranchCost::Regular {
+            const_cost: steps(25),
+            pre_cost: PreCost(OrderedHashMap::from_iter(
+                (vec![(CostTokenType::Bitwise, 4)]).into_iter(),
+            )),
+        }],
     }
 }
 
@@ -550,7 +543,8 @@ fn u256_libfunc_cost(libfunc: &Uint256Concrete) -> Vec<ConstCost> {
         Uint256Concrete::IsZero(_) => {
             vec![steps(2), steps(2)]
         }
-        Uint256Concrete::Divmod(_) => vec![ConstCost { steps: 55, holes: 0, range_checks: 17 }],
+        Uint256Concrete::Divmod(_) => vec![ConstCost { steps: 59, holes: 0, range_checks: 17 }],
+        Uint256Concrete::SquareRoot(_) => vec![ConstCost { steps: 33, holes: 0, range_checks: 8 }],
     }
 }
 

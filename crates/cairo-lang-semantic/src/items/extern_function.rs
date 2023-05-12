@@ -14,7 +14,9 @@ use crate::db::SemanticGroup;
 use crate::diagnostic::SemanticDiagnosticKind::*;
 use crate::diagnostic::SemanticDiagnostics;
 use crate::expr::compute::Environment;
-use crate::resolve::{ResolvedItems, Resolver};
+use crate::items::function_with_body::get_implicit_precedence;
+use crate::items::functions::ImplicitPrecedence;
+use crate::resolve::{Resolver, ResolverData};
 use crate::substitution::SemanticRewriter;
 use crate::{semantic, Mutability, Parameter, SemanticDiagnostic, TypeId};
 
@@ -78,12 +80,12 @@ pub fn extern_function_declaration_refs(
 }
 
 /// Query implementation of
-/// [crate::db::SemanticGroup::extern_function_declaration_resolved_lookback].
-pub fn extern_function_declaration_resolved_lookback(
+/// [crate::db::SemanticGroup::extern_function_declaration_resolver_data].
+pub fn extern_function_declaration_resolver_data(
     db: &dyn SemanticGroup,
     extern_function_id: ExternFunctionId,
-) -> Maybe<Arc<ResolvedItems>> {
-    Ok(db.priv_extern_function_declaration_data(extern_function_id)?.resolved_lookback)
+) -> Maybe<Arc<ResolverData>> {
+    Ok(db.priv_extern_function_declaration_data(extern_function_id)?.resolver_data)
 }
 
 // --- Computation ---
@@ -108,6 +110,7 @@ pub fn priv_extern_function_declaration_data(
         &mut resolver,
         module_file_id,
         &declaration.generic_params(syntax_db),
+        true,
     )?;
     if let Some(param) = generic_params.iter().find(|param| param.kind() == GenericKind::Impl) {
         diagnostics.report_by_ptr(
@@ -142,22 +145,32 @@ pub fn priv_extern_function_declaration_data(
 
     match &inline_config {
         InlineConfiguration::None => {}
-        InlineConfiguration::Always(attr) | InlineConfiguration::Never(attr) => {
+        InlineConfiguration::Always(attr)
+        | InlineConfiguration::Never(attr)
+        | InlineConfiguration::Should(attr) => {
             diagnostics
                 .report_by_ptr(attr.stable_ptr.untyped(), InlineAttrForExternFunctionNotAllowed);
         }
     }
 
+    let (_, implicit_precedence_attr) = get_implicit_precedence(db, &mut diagnostics, &attributes)?;
+    if let Some(attr) = implicit_precedence_attr {
+        diagnostics.report_by_ptr(
+            attr.stable_ptr.untyped(),
+            ImplicitPrecedenceAttrForExternFunctionNotAllowed,
+        );
+    }
+
     // Check fully resolved.
-    if let Some((stable_ptr, inference_err)) = resolver.inference.finalize() {
+    if let Some((stable_ptr, inference_err)) = resolver.inference().finalize() {
         inference_err.report(&mut diagnostics, stable_ptr);
     }
     let generic_params = resolver
-        .inference
+        .inference()
         .rewrite(generic_params)
         .map_err(|err| err.report(&mut diagnostics, function_syntax.stable_ptr().untyped()))?;
     let signature = resolver
-        .inference
+        .inference()
         .rewrite(signature)
         .map_err(|err| err.report(&mut diagnostics, function_syntax.stable_ptr().untyped()))?;
 
@@ -167,7 +180,8 @@ pub fn priv_extern_function_declaration_data(
         environment,
         generic_params,
         attributes,
-        resolved_lookback: Arc::new(resolver.resolved_items),
+        resolver_data: Arc::new(resolver.data),
         inline_config,
+        implicit_precedence: ImplicitPrecedence::UNSPECIFIED,
     })
 }

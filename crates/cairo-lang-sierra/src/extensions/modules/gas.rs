@@ -1,9 +1,9 @@
 use convert_case::Casing;
 use itertools::chain;
 
+use super::int::unsigned128::Uint128Type;
 // Module providing the gas related extensions.
 use super::range_check::RangeCheckType;
-use super::uint128::Uint128Type;
 use crate::define_libfunc_hierarchy;
 use crate::extensions::lib_func::{
     BranchSignature, DeferredOutputKind, LibfuncSignature, OutputVarInfo, ParamSignature,
@@ -50,12 +50,7 @@ impl NoGenericArgsGenericLibfunc for WithdrawGasLibfunc {
         let range_check_type = context.get_concrete_type(RangeCheckType::id(), &[])?;
         Ok(LibfuncSignature {
             param_signatures: vec![
-                ParamSignature {
-                    ty: range_check_type.clone(),
-                    allow_deferred: false,
-                    allow_add_const: true,
-                    allow_const: false,
-                },
+                ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
                 ParamSignature::new(gas_builtin_type.clone()),
             ],
             branch_signatures: vec![
@@ -70,7 +65,7 @@ impl NoGenericArgsGenericLibfunc for WithdrawGasLibfunc {
                         },
                         OutputVarInfo {
                             ty: gas_builtin_type.clone(),
-                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: Some(0) },
+                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
                         },
                     ],
                     ap_change: SierraApChange::Known { new_vars_only: false },
@@ -114,7 +109,7 @@ impl NoGenericArgsGenericLibfunc for RedepositGasLibfunc {
                 ty: gas_builtin_type,
                 ref_info: OutputVarReferenceInfo::Deferred(DeferredOutputKind::Generic),
             }],
-            SierraApChange::Known { new_vars_only: true },
+            SierraApChange::Known { new_vars_only: false },
         ))
     }
 }
@@ -253,12 +248,7 @@ impl NoGenericArgsGenericLibfunc for BuiltinCostWithdrawGasLibfunc {
         let builtin_costs_type = context.get_concrete_type(BuiltinCostsType::id(), &[])?;
         Ok(LibfuncSignature {
             param_signatures: vec![
-                ParamSignature {
-                    ty: range_check_type.clone(),
-                    allow_deferred: false,
-                    allow_add_const: true,
-                    allow_const: false,
-                },
+                ParamSignature::new(range_check_type.clone()).with_allow_add_const(),
                 ParamSignature::new(gas_builtin_type.clone()),
                 ParamSignature::new(builtin_costs_type),
             ],
@@ -274,7 +264,7 @@ impl NoGenericArgsGenericLibfunc for BuiltinCostWithdrawGasLibfunc {
                         },
                         OutputVarInfo {
                             ty: gas_builtin_type.clone(),
-                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: Some(0) },
+                            ref_info: OutputVarReferenceInfo::NewTempVar { idx: 0 },
                         },
                     ],
                     ap_change: SierraApChange::Known { new_vars_only: false },

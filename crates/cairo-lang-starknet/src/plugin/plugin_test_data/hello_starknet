@@ -39,6 +39,7 @@ mod HelloStarknet {
         balance::read()
     }
 
+    const TEST_CLASS_HASH: felt252 = 585328711525533199376153401871580275520071725514859164232713649041257501096;
     
     mod balance {
         use starknet::class_hash::ClassHashSerde;
@@ -89,6 +90,7 @@ mod HelloStarknet {
         use option::OptionTrait;
         use option::OptionTraitImpl;
 
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn increase_balance(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');
@@ -110,6 +112,7 @@ mod HelloStarknet {
             // Result.
             array::ArrayTrait::span(@arr)
         }
+        #[implicit_precedence(Pedersen, RangeCheck, Bitwise, EcOp, Poseidon, SegmentArena, GasBuiltin, System)]
         fn get_balance(mut data: Span::<felt252>) -> Span::<felt252> {
             internal::revoke_ap_tracking();
             gas::withdraw_gas().expect('Out of gas');
@@ -128,7 +131,7 @@ mod HelloStarknet {
             let mut arr = array::array_new();
             // References.
             // Result.
-            serde::Serde::<felt252>::serialize(ref arr, res);
+            serde::Serde::<felt252>::serialize(@res, ref arr);
             array::ArrayTrait::span(@arr)
         }
         
